@@ -1,0 +1,13 @@
+{
+  "itemGroup.tpamod": "Example Mod Tab",
+  "block.tpamod.example_block": "Example Block",
+  "item.tpamod.example_item": "Example Item",
+
+  "tpamod.configuration.title": "Tpa Mod Configs",
+  "tpamod.configuration.section.tpamod.common.toml": "Tpa Mod Configs",
+  "tpamod.configuration.section.tpamod.common.toml.title": "Tpa Mod Configs",
+  "tpamod.configuration.items": "Item List",
+  "tpamod.configuration.logDirtBlock": "Log Dirt Block",
+  "tpamod.configuration.magicNumberIntroduction": "Magic Number Text",
+  "tpamod.configuration.magicNumber": "Magic Number"
+}
