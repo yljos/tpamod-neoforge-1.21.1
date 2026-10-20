@@ -1,9 +1,10 @@
 package com.tpa.yljos;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
-import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.coordinates.Coordinates;
 import net.minecraft.commands.arguments.coordinates.Vec3Argument;
 import net.minecraft.core.particles.ParticleTypes;
@@ -16,6 +17,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -25,9 +29,11 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.level.ExplosionEvent;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.Collections;
 
 @Mod(TpaMod.MODID)
@@ -68,6 +74,14 @@ public class TpaMod {
         );
     }
 
+    // Set player attack speed attribute to remove attack cooldown
+    private static void removeAttackCooldown(ServerPlayer player) {
+        AttributeInstance attackSpeed = player.getAttribute(Attributes.ATTACK_SPEED);
+        if (attackSpeed != null) {
+            attackSpeed.setBaseValue(1024.0D);
+        }
+    }
+
     // Retain persisted NBT data across player deaths
     @SubscribeEvent
     public static void onPlayerClone(PlayerEvent.Clone event) {
@@ -81,18 +95,21 @@ public class TpaMod {
         }
     }
 
-    // Login restriction for Monday through Thursday
+    // Handle player login: remove cooldown & enforce weekday restriction
     @SubscribeEvent
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
-        if (!Config.RESTRICT_DAYS_ENABLED.get()) {
-            return;
-        }
-
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
 
-        // Bypass check if the player has operator permission
+        // Remove weapon attack cooldown on login
+        removeAttackCooldown(player);
+
+        if (!Config.RESTRICT_DAYS_ENABLED.get()) {
+            return;
+        }
+
+        // Bypass check if the player has operator permission (OP level 2+)
         if (player.hasPermissions(2)) {
             return;
         }
@@ -101,6 +118,22 @@ public class TpaMod {
         DayOfWeek day = LocalDate.now().getDayOfWeek();
         if (day == DayOfWeek.MONDAY || day == DayOfWeek.TUESDAY || day == DayOfWeek.WEDNESDAY || day == DayOfWeek.THURSDAY) {
             player.connection.disconnect(Component.literal("§6§l周一到周四不准玩"));
+        }
+    }
+
+    // Restore high attack speed after respawn
+    @SubscribeEvent
+    public static void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            removeAttackCooldown(player);
+        }
+    }
+
+    // Prevent creeper explosions from damaging terrain and blocks
+    @SubscribeEvent
+    public static void onExplosionDetonate(ExplosionEvent.Detonate event) {
+        if (event.getExplosion().getIndirectSourceEntity() instanceof Creeper || event.getExplosion().getDirectSourceEntity() instanceof Creeper) {
+            event.getAffectedBlocks().clear();
         }
     }
 
@@ -133,25 +166,43 @@ public class TpaMod {
         // 2. /tpa <player> OR /tpa <x y z>
         dispatcher.register(
                 Commands.literal("tpa")
-                        .then(Commands.argument("target", EntityArgument.player()).executes(ctx -> {
-                            ServerPlayer sourcePlayer = ctx.getSource().getPlayerOrException();
-                            ServerPlayer targetPlayer = EntityArgument.getPlayer(ctx, "target");
+                        .then(Commands.argument("target", StringArgumentType.word())
+                                .suggests((ctx, builder) -> {
+                                    CommandSourceStack source = ctx.getSource();
+                                    // Exclude self from tab completion suggestions
+                                    String senderName = source.isPlayer() ? source.getPlayer().getScoreboardName() : "";
+                                    return SharedSuggestionProvider.suggest(
+                                            Arrays.stream(source.getServer().getPlayerNames())
+                                                    .filter(name -> !name.equalsIgnoreCase(senderName)),
+                                            builder
+                                    );
+                                })
+                                .executes(ctx -> {
+                                    ServerPlayer sourcePlayer = ctx.getSource().getPlayerOrException();
+                                    String targetName = StringArgumentType.getString(ctx, "target");
 
-                            playTeleportEffects(sourcePlayer);
-                            sourcePlayer.teleportTo(
-                                    targetPlayer.serverLevel(),
-                                    targetPlayer.getX(),
-                                    targetPlayer.getY(),
-                                    targetPlayer.getZ(),
-                                    Collections.emptySet(),
-                                    targetPlayer.getYRot(),
-                                    targetPlayer.getXRot()
-                            );
-                            playTeleportEffects(sourcePlayer);
+                                    ServerPlayer targetPlayer = ctx.getSource().getServer().getPlayerList().getPlayerByName(targetName);
+                                    if (targetPlayer == null) {
+                                        sourcePlayer.sendSystemMessage(Component.literal("Player not found: " + targetName));
+                                        return 0;
+                                    }
 
-                            sourcePlayer.sendSystemMessage(Component.literal("Teleported to " + targetPlayer.getScoreboardName()));
-                            return 1;
-                        }))
+                                    // Teleport to target player
+                                    playTeleportEffects(sourcePlayer);
+                                    sourcePlayer.teleportTo(
+                                            targetPlayer.serverLevel(),
+                                            targetPlayer.getX(),
+                                            targetPlayer.getY(),
+                                            targetPlayer.getZ(),
+                                            Collections.emptySet(),
+                                            targetPlayer.getYRot(),
+                                            targetPlayer.getXRot()
+                                    );
+                                    playTeleportEffects(sourcePlayer);
+
+                                    sourcePlayer.sendSystemMessage(Component.literal("Teleported to " + targetPlayer.getScoreboardName()));
+                                    return 1;
+                                }))
                         .then(Commands.argument("pos", Vec3Argument.vec3()).executes(ctx -> {
                             ServerPlayer sourcePlayer = ctx.getSource().getPlayerOrException();
                             Coordinates coords = Vec3Argument.getCoordinates(ctx, "pos");
