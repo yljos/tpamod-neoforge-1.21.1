@@ -1,12 +1,11 @@
 package com.tpa.yljos;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
-import net.minecraft.commands.arguments.coordinates.Coordinates;
-import net.minecraft.commands.arguments.coordinates.Vec3Argument;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
@@ -21,7 +20,6 @@ import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -163,7 +161,7 @@ public class TpaMod {
                         }))
         );
 
-        // 2. /tpa <player> OR /tpa <x y z>
+        // 2. /tpa <player> OR /tpa <x> <y> <z>
         dispatcher.register(
                 Commands.literal("tpa")
                         .then(Commands.argument("target", StringArgumentType.word())
@@ -203,26 +201,30 @@ public class TpaMod {
                                     sourcePlayer.sendSystemMessage(Component.literal("Teleported to " + targetPlayer.getScoreboardName()));
                                     return 1;
                                 }))
-                        .then(Commands.argument("pos", Vec3Argument.vec3()).executes(ctx -> {
-                            ServerPlayer sourcePlayer = ctx.getSource().getPlayerOrException();
-                            Coordinates coords = Vec3Argument.getCoordinates(ctx, "pos");
-                            Vec3 targetVec = coords.getPosition(ctx.getSource());
+                        .then(Commands.argument("x", DoubleArgumentType.doubleArg())
+                                .then(Commands.argument("y", DoubleArgumentType.doubleArg())
+                                        .then(Commands.argument("z", DoubleArgumentType.doubleArg())
+                                                .executes(ctx -> {
+                                                    ServerPlayer sourcePlayer = ctx.getSource().getPlayerOrException();
+                                                    double x = DoubleArgumentType.getDouble(ctx, "x");
+                                                    double y = DoubleArgumentType.getDouble(ctx, "y");
+                                                    double z = DoubleArgumentType.getDouble(ctx, "z");
 
-                            playTeleportEffects(sourcePlayer);
-                            sourcePlayer.teleportTo(
-                                    sourcePlayer.serverLevel(),
-                                    targetVec.x(),
-                                    targetVec.y(),
-                                    targetVec.z(),
-                                    Collections.emptySet(),
-                                    sourcePlayer.getYRot(),
-                                    sourcePlayer.getXRot()
-                            );
-                            playTeleportEffects(sourcePlayer);
+                                                    playTeleportEffects(sourcePlayer);
+                                                    sourcePlayer.teleportTo(
+                                                            sourcePlayer.serverLevel(),
+                                                            x,
+                                                            y,
+                                                            z,
+                                                            Collections.emptySet(),
+                                                            sourcePlayer.getYRot(),
+                                                            sourcePlayer.getXRot()
+                                                    );
+                                                    playTeleportEffects(sourcePlayer);
 
-                            sourcePlayer.sendSystemMessage(Component.literal(String.format("Teleported to %.1f, %.1f, %.1f", targetVec.x(), targetVec.y(), targetVec.z())));
-                            return 1;
-                        }))
+                                                    sourcePlayer.sendSystemMessage(Component.literal(String.format("Teleported to %.1f, %.1f, %.1f", x, y, z)));
+                                                    return 1;
+                                                }))))
         );
 
         // 3. /sethome
