@@ -1,117 +1,243 @@
 package com.tpa.yljos;
 
-import org.slf4j.Logger;
-
-import com.mojang.logging.LogUtils;
-
-import net.minecraft.core.registries.BuiltInRegistries;
+import com.mojang.brigadier.CommandDispatcher;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.commands.arguments.coordinates.Coordinates;
+import net.minecraft.commands.arguments.coordinates.Vec3Argument;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.food.FoodProperties;
-import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.CreativeModeTab;
-import net.minecraft.world.item.CreativeModeTabs;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockBehaviour;
-import net.minecraft.world.level.material.MapColor;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.IEventBus;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
-import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
-import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
-import net.neoforged.neoforge.event.server.ServerStartingEvent;
-import net.neoforged.neoforge.registries.DeferredBlock;
-import net.neoforged.neoforge.registries.DeferredHolder;
-import net.neoforged.neoforge.registries.DeferredItem;
-import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 
-// The value here should match an entry in the META-INF/neoforge.mods.toml file
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.Collections;
+
 @Mod(TpaMod.MODID)
+@EventBusSubscriber(modid = TpaMod.MODID)
 public class TpaMod {
-    // Define mod id in a common place for everything to reference
     public static final String MODID = "tpamod";
-    // Directly reference a slf4j logger
-    public static final Logger LOGGER = LogUtils.getLogger();
-    // Create a Deferred Register to hold Blocks which will all be registered under the "tpamod" namespace
-    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(MODID);
-    // Create a Deferred Register to hold Items which will all be registered under the "tpamod" namespace
-    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(MODID);
-    // Create a Deferred Register to hold CreativeModeTabs which will all be registered under the "tpamod" namespace
-    public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
+    private static final String PERSISTED_TAG = "PlayerPersisted";
+    private static final String HOME_TAG = "HomeLocation";
 
-    // Creates a new Block with the id "tpamod:example_block", combining the namespace and path
-    public static final DeferredBlock<Block> EXAMPLE_BLOCK = BLOCKS.registerSimpleBlock("example_block", BlockBehaviour.Properties.of().mapColor(MapColor.STONE));
-    // Creates a new BlockItem with the id "tpamod:example_block", combining the namespace and path
-    public static final DeferredItem<BlockItem> EXAMPLE_BLOCK_ITEM = ITEMS.registerSimpleBlockItem("example_block", EXAMPLE_BLOCK);
-
-    // Creates a new food item with the id "tpamod:example_id", nutrition 1 and saturation 2
-    public static final DeferredItem<Item> EXAMPLE_ITEM = ITEMS.registerSimpleItem("example_item", new Item.Properties().food(new FoodProperties.Builder()
-            .alwaysEdible().nutrition(1).saturationModifier(2f).build()));
-
-    // Creates a creative tab with the id "tpamod:example_tab" for the example item, that is placed after the combat tab
-    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> EXAMPLE_TAB = CREATIVE_MODE_TABS.register("example_tab", () -> CreativeModeTab.builder()
-            .title(Component.translatable("itemGroup.tpamod")) //The language key for the title of your CreativeModeTab
-            .withTabsBefore(CreativeModeTabs.COMBAT)
-            .icon(() -> EXAMPLE_ITEM.get().getDefaultInstance())
-            .displayItems((parameters, output) -> {
-                output.accept(EXAMPLE_ITEM.get());// Add the example item to the tab. For your own tabs, this method is preferred over the event
-            }).build());
-
-    // The constructor for the mod class is the first code that is run when your mod is loaded.
-    // FML will recognize some parameter types like IEventBus or ModContainer and pass them in automatically.
-    public TpaMod(IEventBus modEventBus, ModContainer modContainer) {
-        // Register the commonSetup method for modloading
-        modEventBus.addListener(this::commonSetup);
-
-        // Register the Deferred Register to the mod event bus so blocks get registered
-        BLOCKS.register(modEventBus);
-        // Register the Deferred Register to the mod event bus so items get registered
-        ITEMS.register(modEventBus);
-        // Register the Deferred Register to the mod event bus so tabs get registered
-        CREATIVE_MODE_TABS.register(modEventBus);
-
-        // Register ourselves for server and other game events we are interested in.
-        // Note that this is necessary if and only if we want *this* class (TpaMod) to respond directly to events.
-        // Do not add this line if there are no @SubscribeEvent-annotated functions in this class, like onServerStarting() below.
-        NeoForge.EVENT_BUS.register(this);
-
-        // Register the item to a creative tab
-        modEventBus.addListener(this::addCreative);
-
-        // Register our mod's ModConfigSpec so that FML can create and load the config file for us
-        modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+    public TpaMod(ModContainer modContainer) {
+        // Register server configuration
+        modContainer.registerConfig(ModConfig.Type.SERVER, Config.SPEC);
     }
 
-    private void commonSetup(FMLCommonSetupEvent event) {
-        // Some common setup code
-        LOGGER.info("HELLO FROM COMMON SETUP");
-
-        if (Config.LOG_DIRT_BLOCK.getAsBoolean()) {
-            LOGGER.info("DIRT BLOCK >> {}", BuiltInRegistries.BLOCK.getKey(Blocks.DIRT));
-        }
-
-        LOGGER.info("{}{}", Config.MAGIC_NUMBER_INTRODUCTION.get(), Config.MAGIC_NUMBER.getAsInt());
-
-        Config.ITEM_STRINGS.get().forEach((item) -> LOGGER.info("ITEM >> {}", item));
+    // Play teleport sound and portal particles around the player
+    public static void playTeleportEffects(ServerPlayer player) {
+        ServerLevel level = player.serverLevel();
+        level.playSound(
+                null,
+                player.getX(),
+                player.getY(),
+                player.getZ(),
+                SoundEvents.ENDERMAN_TELEPORT,
+                SoundSource.PLAYERS,
+                1.0F,
+                1.0F
+        );
+        level.sendParticles(
+                ParticleTypes.PORTAL,
+                player.getX(),
+                player.getY() + 1.0D,
+                player.getZ(),
+                32,
+                0.5D,
+                1.0D,
+                0.5D,
+                0.1D
+        );
     }
 
-    // Add the example block item to the building blocks tab
-    private void addCreative(BuildCreativeModeTabContentsEvent event) {
-        if (event.getTabKey() == CreativeModeTabs.BUILDING_BLOCKS) {
-            event.accept(EXAMPLE_BLOCK_ITEM);
-        }
-    }
-
-    // You can use SubscribeEvent and let the Event Bus discover methods to call
+    // Retain persisted NBT data across player deaths
     @SubscribeEvent
-    public void onServerStarting(ServerStartingEvent event) {
-        // Do something when the server starts
-        LOGGER.info("HELLO from server starting");
+    public static void onPlayerClone(PlayerEvent.Clone event) {
+        if (!event.isWasDeath()) {
+            return;
+        }
+
+        CompoundTag originalTag = event.getOriginal().getPersistentData();
+        if (originalTag.contains(PERSISTED_TAG)) {
+            event.getEntity().getPersistentData().put(PERSISTED_TAG, originalTag.getCompound(PERSISTED_TAG).copy());
+        }
+    }
+
+    // Login restriction for Monday through Thursday
+    @SubscribeEvent
+    public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
+        if (!Config.RESTRICT_DAYS_ENABLED.get()) {
+            return;
+        }
+
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+
+        // Bypass check if the player has operator permission
+        if (player.hasPermissions(2)) {
+            return;
+        }
+
+        // Check current day of week
+        DayOfWeek day = LocalDate.now().getDayOfWeek();
+        if (day == DayOfWeek.MONDAY || day == DayOfWeek.TUESDAY || day == DayOfWeek.WEDNESDAY || day == DayOfWeek.THURSDAY) {
+            player.connection.disconnect(Component.literal("§6§l周一到周四不准玩"));
+        }
+    }
+
+    // Register server commands
+    @SubscribeEvent
+    public static void onRegisterCommands(RegisterCommandsEvent event) {
+        CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
+
+        // 1. /restrictdays <on|off|status>
+        dispatcher.register(
+                Commands.literal("restrictdays")
+                        .requires(source -> source.hasPermission(2))
+                        .then(Commands.literal("on").executes(ctx -> {
+                            Config.RESTRICT_DAYS_ENABLED.set(true);
+                            ctx.getSource().sendSuccess(() -> Component.literal("Weekday join restriction enabled."), true);
+                            return 1;
+                        }))
+                        .then(Commands.literal("off").executes(ctx -> {
+                            Config.RESTRICT_DAYS_ENABLED.set(false);
+                            ctx.getSource().sendSuccess(() -> Component.literal("Weekday join restriction disabled."), true);
+                            return 1;
+                        }))
+                        .then(Commands.literal("status").executes(ctx -> {
+                            String state = Config.RESTRICT_DAYS_ENABLED.get() ? "ENABLED" : "DISABLED";
+                            ctx.getSource().sendSuccess(() -> Component.literal("Weekday join restriction is currently: " + state), false);
+                            return 1;
+                        }))
+        );
+
+        // 2. /tpa <player> OR /tpa <x y z>
+        dispatcher.register(
+                Commands.literal("tpa")
+                        .then(Commands.argument("target", EntityArgument.player()).executes(ctx -> {
+                            ServerPlayer sourcePlayer = ctx.getSource().getPlayerOrException();
+                            ServerPlayer targetPlayer = EntityArgument.getPlayer(ctx, "target");
+
+                            playTeleportEffects(sourcePlayer);
+                            sourcePlayer.teleportTo(
+                                    targetPlayer.serverLevel(),
+                                    targetPlayer.getX(),
+                                    targetPlayer.getY(),
+                                    targetPlayer.getZ(),
+                                    Collections.emptySet(),
+                                    targetPlayer.getYRot(),
+                                    targetPlayer.getXRot()
+                            );
+                            playTeleportEffects(sourcePlayer);
+
+                            sourcePlayer.sendSystemMessage(Component.literal("Teleported to " + targetPlayer.getScoreboardName()));
+                            return 1;
+                        }))
+                        .then(Commands.argument("pos", Vec3Argument.vec3()).executes(ctx -> {
+                            ServerPlayer sourcePlayer = ctx.getSource().getPlayerOrException();
+                            Coordinates coords = Vec3Argument.getCoordinates(ctx, "pos");
+                            Vec3 targetVec = coords.getPosition(ctx.getSource());
+
+                            playTeleportEffects(sourcePlayer);
+                            sourcePlayer.teleportTo(
+                                    sourcePlayer.serverLevel(),
+                                    targetVec.x(),
+                                    targetVec.y(),
+                                    targetVec.z(),
+                                    Collections.emptySet(),
+                                    sourcePlayer.getYRot(),
+                                    sourcePlayer.getXRot()
+                            );
+                            playTeleportEffects(sourcePlayer);
+
+                            sourcePlayer.sendSystemMessage(Component.literal(String.format("Teleported to %.1f, %.1f, %.1f", targetVec.x(), targetVec.y(), targetVec.z())));
+                            return 1;
+                        }))
+        );
+
+        // 3. /sethome
+        dispatcher.register(
+                Commands.literal("sethome").executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    CompoundTag persistentData = player.getPersistentData();
+                    CompoundTag persisted = persistentData.getCompound(PERSISTED_TAG);
+
+                    CompoundTag homeData = new CompoundTag();
+                    homeData.putDouble("x", player.getX());
+                    homeData.putDouble("y", player.getY());
+                    homeData.putDouble("z", player.getZ());
+                    homeData.putString("dim", player.level().dimension().location().toString());
+
+                    persisted.put(HOME_TAG, homeData);
+                    persistentData.put(PERSISTED_TAG, persisted);
+
+                    player.sendSystemMessage(Component.literal("Home location set successfully."));
+                    return 1;
+                })
+        );
+
+        // 4. /home
+        dispatcher.register(
+                Commands.literal("home").executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    CompoundTag persistentData = player.getPersistentData();
+                    CompoundTag persisted = persistentData.getCompound(PERSISTED_TAG);
+
+                    if (!persisted.contains(HOME_TAG)) {
+                        player.sendSystemMessage(Component.literal("You have not set a home yet. Use /sethome."));
+                        return 0;
+                    }
+
+                    CompoundTag homeData = persisted.getCompound(HOME_TAG);
+                    double x = homeData.getDouble("x");
+                    double y = homeData.getDouble("y");
+                    double z = homeData.getDouble("z");
+                    String dimStr = homeData.getString("dim");
+
+                    ResourceLocation dimLocation = ResourceLocation.tryParse(dimStr);
+                    ResourceKey<Level> dimKey = dimLocation != null
+                            ? ResourceKey.create(Registries.DIMENSION, dimLocation)
+                            : Level.OVERWORLD;
+
+                    ServerLevel targetLevel = player.getServer().getLevel(dimKey);
+                    if (targetLevel == null) {
+                        targetLevel = player.serverLevel();
+                    }
+
+                    playTeleportEffects(player);
+                    player.teleportTo(
+                            targetLevel,
+                            x,
+                            y,
+                            z,
+                            Collections.emptySet(),
+                            player.getYRot(),
+                            player.getXRot()
+                    );
+                    playTeleportEffects(player);
+
+                    player.sendSystemMessage(Component.literal("Teleported home."));
+                    return 1;
+                })
+        );
     }
 }
